@@ -1,0 +1,10 @@
+fastapi 
+uvicorn
+sqlalchemy 
+asyncpg 
+alembic 
+pydantic-settings 
+argon2-cffi 
+python-jose[cryptography] 
+firebase-admin
+email-validator
