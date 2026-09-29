@@ -154,6 +154,7 @@ async def get_chats(
 
     # ---------------------------------------------
     # Get current page
+    # Newest chats -> oldest chats
     # ---------------------------------------------
 
     result = await db.execute(
@@ -162,7 +163,8 @@ async def get_chats(
             ChatSession.user_id == current_user.id
         )
         .order_by(
-            ChatSession.updated_at.desc()
+            ChatSession.updated_at.desc(),
+            ChatSession.id.desc(),
         )
         .offset(offset)
         .limit(page_size)
@@ -175,6 +177,10 @@ async def get_chats(
     # ---------------------------------------------
 
     has_next = offset + len(chats) < total
+
+    # ---------------------------------------------
+    # Response
+    # ---------------------------------------------
 
     return PaginatedChatsResponse(
         items=chats,
@@ -194,13 +200,13 @@ async def get_chat(
     page: int = Query(
         1,
         ge=1,
-        description="Page number"
+        description="Page number",
     ),
     page_size: int = Query(
         50,
         ge=1,
         le=100,
-        description="Number of messages per page"
+        description="Number of messages per page",
     ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -251,13 +257,20 @@ async def get_chat(
             ChatMessage.chat_id == chat_id
         )
         .order_by(
-            ChatMessage.created_at.asc()
+            ChatMessage.created_at.desc(),
+            ChatMessage.id.desc(),
         )
         .offset(offset)
         .limit(page_size)
     )
 
-    messages = messages_result.scalars().all()
+    messages = list(messages_result.scalars().all())
+
+    # ---------------------------------------------
+    # Return page oldest -> newest
+    # ---------------------------------------------
+
+    messages.reverse()
 
     # ---------------------------------------------
     # Pagination information
