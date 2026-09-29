@@ -9,3 +9,4 @@ python-jose[cryptography]
 firebase-admin
 email-validator
 httpx
+sqlalchemy[asyncio]
