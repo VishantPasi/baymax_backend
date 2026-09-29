@@ -75,14 +75,14 @@
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db.models import ChatSession, ChatMessage, User
-from app.schemas.chat import (ChatCreate, ChatResponse, ChatDetailResponse,)
+from app.schemas.chat import (ChatCreate, ChatResponse, ChatDetailResponse, PaginatedChatMessagesResponse, PaginatedChatsResponse,)
 from sqlalchemy.orm import selectinload
 from app.schemas.message import MessageCreate
 from app.core.dependencies import get_current_user
@@ -119,44 +119,105 @@ async def create_chat(
 
 @router.get(
     "",
-    response_model=list[ChatResponse],
+    response_model=PaginatedChatsResponse,
 )
 async def get_chats(
+    page: int = Query(
+        1,
+        ge=1,
+        description="Page number"
+    ),
+    page_size: int = Query(
+        20,
+        ge=1,
+        le=100,
+        description="Number of chats per page"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    offset = (page - 1) * page_size
+
+    # ---------------------------------------------
+    # Total number of chats
+    # ---------------------------------------------
+
+    total_result = await db.execute(
+        select(func.count())
+        .select_from(ChatSession)
+        .where(
+            ChatSession.user_id == current_user.id
+        )
+    )
+
+    total = total_result.scalar_one()
+
+    # ---------------------------------------------
+    # Get current page
+    # ---------------------------------------------
+
     result = await db.execute(
         select(ChatSession)
-        .where(ChatSession.user_id == current_user.id)
-        .order_by(ChatSession.updated_at.desc())
+        .where(
+            ChatSession.user_id == current_user.id
+        )
+        .order_by(
+            ChatSession.updated_at.desc()
+        )
+        .offset(offset)
+        .limit(page_size)
     )
 
     chats = result.scalars().all()
 
-    return chats
+    # ---------------------------------------------
+    # Check if another page exists
+    # ---------------------------------------------
+
+    has_next = offset + len(chats) < total
+
+    return PaginatedChatsResponse(
+        items=chats,
+        page=page,
+        page_size=page_size,
+        total=total,
+        has_next=has_next,
+    )
 
 
 @router.get(
     "/{chat_id}",
-    response_model=ChatDetailResponse,
+    response_model=PaginatedChatMessagesResponse,
 )
 async def get_chat(
     chat_id: int,
+    page: int = Query(
+        1,
+        ge=1,
+        description="Page number"
+    ),
+    page_size: int = Query(
+        50,
+        ge=1,
+        le=100,
+        description="Number of messages per page"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
+    # ---------------------------------------------
+    # Get chat
+    # ---------------------------------------------
+
+    chat_result = await db.execute(
         select(ChatSession)
-        .options(
-            selectinload(ChatSession.messages)
-        )
         .where(
             ChatSession.id == chat_id,
             ChatSession.user_id == current_user.id,
         )
     )
 
-    chat = result.scalar_one_or_none()
+    chat = chat_result.scalar_one_or_none()
 
     if chat is None:
         raise HTTPException(
@@ -164,7 +225,55 @@ async def get_chat(
             detail="Chat not found",
         )
 
-    return chat
+    # ---------------------------------------------
+    # Total messages
+    # ---------------------------------------------
+
+    total_result = await db.execute(
+        select(func.count())
+        .select_from(ChatMessage)
+        .where(
+            ChatMessage.chat_id == chat_id
+        )
+    )
+
+    total = total_result.scalar_one()
+
+    # ---------------------------------------------
+    # Get messages
+    # ---------------------------------------------
+
+    offset = (page - 1) * page_size
+
+    messages_result = await db.execute(
+        select(ChatMessage)
+        .where(
+            ChatMessage.chat_id == chat_id
+        )
+        .order_by(
+            ChatMessage.created_at.asc()
+        )
+        .offset(offset)
+        .limit(page_size)
+    )
+
+    messages = messages_result.scalars().all()
+
+    # ---------------------------------------------
+    # Pagination information
+    # ---------------------------------------------
+
+    has_next = offset + len(messages) < total
+
+    return PaginatedChatMessagesResponse(
+        chat_id=chat.id,
+        title=chat.title,
+        messages=messages,
+        page=page,
+        page_size=page_size,
+        total=total,
+        has_next=has_next,
+    )
 
 
 @router.post(

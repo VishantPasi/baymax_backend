@@ -1,6 +1,5 @@
 from datetime import datetime
-
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 
 class ChatCreate(BaseModel):
@@ -13,16 +12,26 @@ class ChatResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True
 
 
-class ChatMessageResponse(BaseModel):
+class PaginatedChatsResponse(BaseModel):
+    items: list[ChatResponse]
+    page: int
+    page_size: int
+    total: int
+    has_next: bool
+
+
+class MessageResponse(BaseModel):
     id: int
     role: str
     content: str
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True
 
 
 class ChatDetailResponse(BaseModel):
@@ -30,6 +39,17 @@ class ChatDetailResponse(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
-    messages: list[ChatMessageResponse]
+    messages: list[MessageResponse]
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True
+
+
+class PaginatedChatMessagesResponse(BaseModel):
+    chat_id: int
+    title: str
+    messages: list[MessageResponse]
+    page: int
+    page_size: int
+    total: int
+    has_next: bool
