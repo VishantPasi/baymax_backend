@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -5,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.db.database import get_db, AsyncSessionLocal
 from app.db.models import ChatSession, ChatMessage, User
 from app.schemas.chat import (ChatCreate, ChatResponse, ChatDetailResponse, PaginatedChatMessagesResponse, PaginatedChatsResponse,)
 from sqlalchemy.orm import selectinload
@@ -185,16 +186,16 @@ async def get_chat(
     )
 
 
-@router.post(
-    "/{chat_id}/messages",
-)
+@router.post("/{chat_id}/messages")
 async def send_message(
     chat_id: int,
     message: MessageCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-
+    # --------------------------------------------------
+    # 1. Validate message
+    # --------------------------------------------------
 
     if not message.message.strip():
         raise HTTPException(
@@ -202,10 +203,12 @@ async def send_message(
             detail="Message cannot be empty",
         )
 
+    # --------------------------------------------------
+    # 2. Get chat
+    # --------------------------------------------------
+
     result = await db.execute(
-        select(ChatSession)
-        .options(selectinload(ChatSession.messages))
-        .where(
+        select(ChatSession).where(
             ChatSession.id == chat_id,
             ChatSession.user_id == current_user.id,
         )
@@ -219,10 +222,14 @@ async def send_message(
             detail="Chat not found",
         )
 
+    # --------------------------------------------------
+    # 3. Save user message
+    # --------------------------------------------------
+
     user_message = ChatMessage(
         chat_id=chat.id,
         role="user",
-        content=message.message,
+        content=message.message.strip(),
     )
 
     db.add(user_message)
@@ -230,63 +237,137 @@ async def send_message(
     chat.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
-    await db.refresh(user_message)
 
-    messages = []
+    # --------------------------------------------------
+    # 4. IMPORTANT:
+    # Reload messages AFTER commit
+    # --------------------------------------------------
 
-    for msg in chat.messages:
-        messages.append({
+    messages_result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.chat_id == chat.id)
+        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+    )
+
+    chat_messages = messages_result.scalars().all()
+
+    messages = [
+        {
             "role": msg.role,
             "content": msg.content,
-        })
+        }
+        for msg in chat_messages
+    ]
 
-    messages.append({
-        "role": "user",
-        "content": message.message,
-    })
-
+    # --------------------------------------------------
+    # 5. Generate AI response
+    # --------------------------------------------------
 
     async def generate():
 
         full_response = ""
 
         try:
+            async for chunk in LLMService.generate_stream(messages):
 
-            async for chunk in LLMService.generate_stream(
-                messages
-            ):
+                if not chunk:
+                    continue
 
                 full_response += chunk
 
                 data = {
-                    "content": chunk
+                    "content": chunk,
                 }
 
                 yield f"data: {json.dumps(data)}\n\n"
 
-            assistant_message = ChatMessage(
-                chat_id=chat.id,
-                role="assistant",
-                content=full_response,
-            )
+            # --------------------------------------------------
+            # 6. Save assistant response
+            # --------------------------------------------------
 
-            db.add(assistant_message)
+            if full_response:
 
-            chat.updated_at = datetime.now(timezone.utc)
+                assistant_message = ChatMessage(
+                    chat_id=chat.id,
+                    role="assistant",
+                    content=full_response,
+                )
 
-            await db.commit()
+                db.add(assistant_message)
+
+                chat.updated_at = datetime.now(timezone.utc)
+
+                await db.commit()
+
+            # --------------------------------------------------
+            # 7. Finish stream
+            # --------------------------------------------------
 
             yield "data: [DONE]\n\n"
+
+        except asyncio.CancelledError:
+
+            if full_response:
+
+                async def save_partial_response(
+                    chat_id: int,
+                    content: str,
+                ):
+
+                    async with AsyncSessionLocal() as session:
+
+                        try:
+
+                            assistant_message = ChatMessage(
+                                chat_id=chat_id,
+                                role="assistant",
+                                content=content,
+                            )
+
+                            session.add(assistant_message)
+
+                            chat_result = await session.execute(
+                                select(ChatSession).where(
+                                    ChatSession.id == chat_id
+                                )
+                            )
+
+                            chat_session = (
+                                chat_result.scalar_one_or_none()
+                            )
+
+                            if chat_session:
+
+                                chat_session.updated_at = (
+                                    datetime.now(timezone.utc)
+                                )
+
+                            await session.commit()
+
+                        except Exception:
+
+                            await session.rollback()
+
+                asyncio.create_task(
+                    save_partial_response(
+                        chat_id=chat.id,
+                        content=full_response,
+                    )
+                )
+
+            raise
 
         except Exception as e:
 
             await db.rollback()
 
             error_data = {
-                "error": str(e)
+                "error": str(e),
             }
 
-            yield f"data: {json.dumps(error_data)}\n\n"
+            yield (
+                f"data: {json.dumps(error_data)}\n\n"
+            )
 
     return StreamingResponse(
         generate(),
