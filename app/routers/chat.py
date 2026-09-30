@@ -88,6 +88,8 @@ from app.schemas.message import MessageCreate
 from app.core.dependencies import get_current_user
 from app.services.llm_service import LLMService
 
+from datetime import datetime, timezone
+
 
 router = APIRouter(
     prefix="/chats",
@@ -341,6 +343,8 @@ async def send_message(
 
     db.add(user_message)
 
+    chat.updated_at = datetime.now(timezone.utc)
+
     await db.commit()
     await db.refresh(user_message)
 
@@ -396,6 +400,8 @@ async def send_message(
             )
 
             db.add(assistant_message)
+
+            chat.updated_at = datetime.now(timezone.utc)
 
             await db.commit()
 
