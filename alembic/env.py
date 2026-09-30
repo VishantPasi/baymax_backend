@@ -10,23 +10,16 @@ from app.core.config import settings
 from app.db.database import Base
 from app.db.models import User
 
-
-# Alembic uses this to detect changes in your SQLAlchemy models
 target_metadata = Base.metadata
 
-
-# Alembic Config object
 config = context.config
 
 
-# Use the DATABASE_URL from your .env
 config.set_main_option(
     "sqlalchemy.url",
     settings.DATABASE_URL,
 )
 
-
-# Configure Python logging
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 

@@ -1,78 +1,3 @@
-# import json
-
-# from fastapi import APIRouter, Depends, HTTPException
-# from fastapi.responses import StreamingResponse
-
-# from app.schemas.chat import ChatRequest
-# from app.services.llm_service import LLMService
-
-# # Change this import to match your existing authentication
-# from app.core.dependencies import get_current_user
-
-
-# router = APIRouter(
-#     prefix="/ai",
-#     tags=["AI"]
-# )
-
-
-# @router.post("/chat")
-# async def chat(
-#     request: ChatRequest,
-#     current_user=Depends(get_current_user)
-# ):
-
-#     if not request.message.strip():
-#         raise HTTPException(
-#             status_code=400,
-#             detail="Message cannot be empty"
-#         )
-
-#     messages = [
-#         {
-#             "role": "user",
-#             "content": request.message
-#         }
-#     ]
-
-#     async def generate():
-
-#         try:
-
-#             async for chunk in LLMService.generate_stream(
-#                 messages
-#             ):
-
-#                 data = {
-#                     "content": chunk
-#                 }
-
-#                 yield f"data: {json.dumps(data)}\n\n"
-
-#             yield "data: [DONE]\n\n"
-
-#         except Exception as e:
-
-#             error_data = {
-#                 "error": str(e)
-#             }
-
-#             yield (
-#                 f"data: {json.dumps(error_data)}\n\n"
-#             )
-
-#     return StreamingResponse(
-#         generate(),
-#         media_type="text/event-stream",
-#         headers={
-#             "Cache-Control": "no-cache",
-#             "Connection": "keep-alive",
-#             "X-Accel-Buffering": "no"
-#         }
-#     )
-
-
-
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -140,10 +65,6 @@ async def get_chats(
 ):
     offset = (page - 1) * page_size
 
-    # ---------------------------------------------
-    # Total number of chats
-    # ---------------------------------------------
-
     total_result = await db.execute(
         select(func.count())
         .select_from(ChatSession)
@@ -153,11 +74,6 @@ async def get_chats(
     )
 
     total = total_result.scalar_one()
-
-    # ---------------------------------------------
-    # Get current page
-    # Newest chats -> oldest chats
-    # ---------------------------------------------
 
     result = await db.execute(
         select(ChatSession)
@@ -174,15 +90,9 @@ async def get_chats(
 
     chats = result.scalars().all()
 
-    # ---------------------------------------------
-    # Check if another page exists
-    # ---------------------------------------------
 
     has_next = offset + len(chats) < total
 
-    # ---------------------------------------------
-    # Response
-    # ---------------------------------------------
 
     return PaginatedChatsResponse(
         items=chats,
@@ -213,9 +123,7 @@ async def get_chat(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # ---------------------------------------------
-    # Get chat
-    # ---------------------------------------------
+
 
     chat_result = await db.execute(
         select(ChatSession)
@@ -233,9 +141,7 @@ async def get_chat(
             detail="Chat not found",
         )
 
-    # ---------------------------------------------
-    # Total messages
-    # ---------------------------------------------
+
 
     total_result = await db.execute(
         select(func.count())
@@ -246,10 +152,6 @@ async def get_chat(
     )
 
     total = total_result.scalar_one()
-
-    # ---------------------------------------------
-    # Get messages
-    # ---------------------------------------------
 
     offset = (page - 1) * page_size
 
@@ -268,15 +170,7 @@ async def get_chat(
 
     messages = list(messages_result.scalars().all())
 
-    # ---------------------------------------------
-    # Return page oldest -> newest
-    # ---------------------------------------------
-
     messages.reverse()
-
-    # ---------------------------------------------
-    # Pagination information
-    # ---------------------------------------------
 
     has_next = offset + len(messages) < total
 
@@ -300,19 +194,13 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # --------------------------------------------------
-    # 1. Validate message
-    # --------------------------------------------------
+
 
     if not message.message.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Message cannot be empty",
         )
-
-    # --------------------------------------------------
-    # 2. Find chat and verify ownership
-    # --------------------------------------------------
 
     result = await db.execute(
         select(ChatSession)
@@ -331,10 +219,6 @@ async def send_message(
             detail="Chat not found",
         )
 
-    # --------------------------------------------------
-    # 3. Save user's message
-    # --------------------------------------------------
-
     user_message = ChatMessage(
         chat_id=chat.id,
         role="user",
@@ -348,10 +232,6 @@ async def send_message(
     await db.commit()
     await db.refresh(user_message)
 
-    # --------------------------------------------------
-    # 4. Build conversation history
-    # --------------------------------------------------
-
     messages = []
 
     for msg in chat.messages:
@@ -360,16 +240,11 @@ async def send_message(
             "content": msg.content,
         })
 
-    # Add the newly-created message because
-    # chat.messages was loaded before we inserted it.
     messages.append({
         "role": "user",
         "content": message.message,
     })
 
-    # --------------------------------------------------
-    # 5. Stream response from LLM
-    # --------------------------------------------------
 
     async def generate():
 
@@ -389,10 +264,6 @@ async def send_message(
 
                 yield f"data: {json.dumps(data)}\n\n"
 
-            # --------------------------------------------------
-            # 6. Save complete AI response
-            # --------------------------------------------------
-
             assistant_message = ChatMessage(
                 chat_id=chat.id,
                 role="assistant",
@@ -404,10 +275,6 @@ async def send_message(
             chat.updated_at = datetime.now(timezone.utc)
 
             await db.commit()
-
-            # --------------------------------------------------
-            # 7. Tell Flutter streaming is finished
-            # --------------------------------------------------
 
             yield "data: [DONE]\n\n"
 

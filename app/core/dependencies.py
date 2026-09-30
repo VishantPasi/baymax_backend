@@ -18,10 +18,8 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
 
-    # Extract the actual JWT string
     token = credentials.credentials
 
-    # Decode JWT
     user_id = decode_access_token(token)
 
     if not user_id:
@@ -30,7 +28,6 @@ async def get_current_user(
             detail="Invalid or expired token",
         )
 
-    # Convert JWT subject to UUID
     try:
         user_uuid = UUID(user_id)
 
@@ -40,7 +37,6 @@ async def get_current_user(
             detail="Invalid token",
         )
 
-    # Find user in PostgreSQL
     result = await db.execute(
         select(User).where(
             User.id == user_uuid

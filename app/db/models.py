@@ -58,7 +58,6 @@ class User(Base):
         onupdate=datetime.utcnow,
     )
 
-    # User → ChatSession
     chat_sessions: Mapped[list["ChatSession"]] = relationship(
         "ChatSession",
         back_populates="user",
@@ -103,13 +102,11 @@ class ChatSession(Base):
         nullable=False,
     )
 
-    # ChatSession → User
     user: Mapped["User"] = relationship(
         "User",
         back_populates="chat_sessions",
     )
 
-    # ChatSession → Messages
     messages: Mapped[list["ChatMessage"]] = relationship(
         "ChatMessage",
         back_populates="chat",
@@ -151,8 +148,7 @@ class ChatMessage(Base):
         server_default=func.now(),
         nullable=False,
     )
-
-    # ChatMessage → ChatSession
+    
     chat: Mapped["ChatSession"] = relationship(
         "ChatSession",
         back_populates="messages",

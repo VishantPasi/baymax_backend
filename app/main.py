@@ -6,7 +6,7 @@ from app.routers.chat import router as chat_router
 
 
 app = FastAPI(
-    title="BayMax API",
+    title="BayMax Server",
 )
 
 
@@ -17,5 +17,5 @@ app.include_router(chat_router)
 @app.get("/")
 async def root():
     return {
-        "message": "BayMax API is running"
+        "message": "BayMax Server is running"
     }
