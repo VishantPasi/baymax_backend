@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from firebase_admin import auth as firebase_auth
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,7 @@ from app.db.database import get_db
 from app.db.models import User
 
 from app.schemas.auth import (
+    GoogleLoginRequest,
     SignupRequest,
     LoginRequest,
     AuthResponse,
@@ -125,4 +127,85 @@ async def get_me(
         "email": current_user.email,
         "name": current_user.name,
         "auth_provider": current_user.auth_provider,
+    }
+
+@router.post("/google")
+async def google_login(
+    request: GoogleLoginRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        # -----------------------------------------
+        # 1. Verify Firebase ID token
+        # -----------------------------------------
+        decoded_token = firebase_auth.verify_id_token(
+            request.id_token
+        )
+
+    except Exception as e:
+        print("Firebase token verification failed:", e)
+
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired Google authentication token",
+        )
+
+    # -----------------------------------------
+    # 2. Extract Google/Firebase information
+    # -----------------------------------------
+    firebase_uid = decoded_token.get("uid")
+    email = decoded_token.get("email")
+    name = decoded_token.get("name")
+
+    if not firebase_uid:
+        raise HTTPException(
+            status_code=401,
+            detail="Firebase UID not found",
+        )
+
+    if not email:
+        raise HTTPException(
+            status_code=400,
+            detail="Email not provided by Google",
+        )
+
+    # -----------------------------------------
+    # 3. Find user by Firebase UID
+    # -----------------------------------------
+    result = await db.execute(
+        select(User).where(
+            User.firebase_uid == firebase_uid
+        )
+    )
+
+    user = result.scalar_one_or_none()
+
+    # -----------------------------------------
+    # 4. Create PostgreSQL user if new
+    # -----------------------------------------
+    if user is None:
+
+        user = User(
+            firebase_uid=firebase_uid,
+            email=email,
+            name=name,
+        )
+
+        db.add(user)
+
+        await db.commit()
+        await db.refresh(user)
+
+    # -----------------------------------------
+    # 5. Generate BayMax access token
+    # -----------------------------------------
+    access_token = create_access_token(
+        str(user.id)
+    )
+
+    # -----------------------------------------
+    # 6. Return same format as normal login
+    # -----------------------------------------
+    return {
+        "accessToken": access_token
     }
